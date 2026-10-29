@@ -70,7 +70,7 @@ async function rejectsWith(promise, pattern, message) {
  * so it reads the profile's `superpowers-delegation-settings` row across through
  * the editor (DSH 0.2.x removed `settings.get()`). A stub without `get` failed
  * the two happy-path tests with `ctx.get is not a function` instead of testing
- * the delegation it exists to test — verified 2026-10-15.
+ * the delegation it exists to test — verified 2026-10-16.
  */
 function captureCtx({ settings = {}, startContinuable } = {}) {
   const registered = []

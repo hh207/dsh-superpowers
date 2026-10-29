@@ -8,7 +8,7 @@
  * copy resolves the module, passes a truthy check, and then throws on the first
  * call — the degradation this file exists to guarantee never runs. That is not
  * hypothetical: a profile whose local dependency tree pinned cosmokit 1.8.2 made
- * the settings page fail with `cosmokit.isVolatile is not a function` (2026-10-15).
+ * the settings page fail with `cosmokit.isVolatile is not a function` (2026-10-16).
  *
  * Each case builds a real package tree in a temp dir — a copy of `lib/` beside a
  * stub `@deepseek-ai/cosmokit` — and imports the module under test for real, so
