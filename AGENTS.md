@@ -130,6 +130,39 @@ schemastery 版本更老时，插件构造 `Config` 会抛，被 `index.js` 的 
   在换机器/换 profile 时必然失效——**默认路由要么省略（继承父会话），要么指向
   本 profile 真实存在的 provider**。
 
+### `modelSelectionSettings: true` 的适用面（2026-10-30 核对）
+
+这一行让 `tool-subagent` 在挂载期解析宿主 `subagentModelSelection` 服务。该服务由
+`subagent-model-selection-settings` 行提供，而它在 `dsh-web-app` bundle 的
+**web-only host rows** 区段——桌面版 profile 不装这个包。缺失时 `apply` 抛
+`tool-subagent: modelSelectionSettings requires ... in the Host scope`，
+整行不挂载。**所以本预设不写这个字段**（官方 `base` 预设同样不写）。
+代价只是每次派发不能选模型，子代理仍继承父会话路由。
+
+⚠️ **但它不是本机上 `subagent` 工具缺失的原因。** 这一点我一开始判断错了，纠正如下：
+
+`@deepseek-ai/dsh-experimental-agent-team-profile` 的 patch 里有
+
+```yaml
+- id: tool-subagent       { disabled: true }
+- id: tool-subagent-fork  { disabled: true }
+- id: tool-subagent-control / tool-subagent-list-agents  同理
+```
+
+它在 profile 的 `dsh.profile.bundles` 里**排在 `@goodjin/dsh-superpowers` 之后**，
+所以后应用的 `disabled: true` 覆盖了前面预设声明的这两行。**本机 `subagent` /
+`subagent_fork` 报 `unknown tool` 完全由此而来**，与预设内容、与插件代码都无关。
+
+要恢复这两个工具，只有两条路：把 agent-team-profile 从 bundle 列表里去掉，或把它
+排在 superpowers 之前（但那样 Team 的禁用意图会被反过来覆盖，需要确认 Agent Teams
+是否还在用）。**在采用 Agent Teams 的 profile 里，`delegate_skill` 是唯一的派发工具**，
+这与本插件文档里"delegate_skill 是唯一派发方式"的说法一致——只是原因不同。
+
+**排查教训**：工具"消失"时，先查**后面层是否 `disabled` 了它**，再查它自己为什么挂载失败。
+同组其他行可用不能证明这一行没被禁用——不同 bundle 层对**不同 id** 有独立的覆盖权。
+我这次先后误判为"预设配置改动导致"和"modelSelectionSettings 导致"，两次都错在
+没有先确认"这个 id 在最终组合里是否被别的层禁用"。
+
 ### 组合与 patch 文件
 
 - `cordis.patch.yml` **必须是一个顶层数组**。

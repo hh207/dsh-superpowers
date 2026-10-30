@@ -227,22 +227,39 @@
     - id: tool-delegate-skill
       name: '@goodjin/dsh-superpowers/delegate-skill'
 
-    # No `agentOptions` here on purpose. The ported row used to pin
-    # `minimax-cn / MiniMax-M3.1-Flash-Preview`, a route this profile does not
-    # register: every dispatch then failed inside the LLM preflight with
-    # `no adapter registered for provider "minimax-cn"`. Omitting it makes a
-    # fresh child inherit the parent's route, which is what the comments above
-    # always claimed would happen.
+    # `modelSelectionSettings: true` is deliberately ABSENT. It makes the tool
+    # resolve the Host's `subagentModelSelection` service at mount, and the row
+    # that provides it (`subagent-model-selection-settings`) lives in the
+    # WEB-ONLY section of the `dsh-web-app` bundle — which a Desktop profile
+    # does not install. The tool then throws
+    #   tool-subagent: `modelSelectionSettings` requires
+    #   @deepseek-ai/dsh-tool-subagent/model-selection-settings in the Host scope
+    # and the whole row never mounts.
+    # Verified 2026-10-30 on Desktop 0.2.1-rc.5; the shipped `base` preset omits
+    # this field for the same reason.
     #
-    # `backgroundMode` is also gone: DSH 0.2.1's schema for this row has no such
-    # field and silently drops it. Continuable is the default, so the behaviour
-    # is unchanged — the line was only misleading.
+    # Omitting it costs only the per-call provider/model picker. The child still
+    # inherits the parent's route.
+    #
+    # `agentOptions` is gone for a different reason: the ported row pinned
+    # `minimax-cn / MiniMax-M3.1-Flash-Preview`, a route this profile does not
+    # register, so any dispatch reaching the LLM preflight failed with
+    # `no adapter registered for provider "minimax-cn"`.
+    #
+    # `backgroundMode` is gone too: it is absent from 0.2.1's schema for this
+    # row and was silently discarded. Continuable is already the default.
+    #
+    # NOTE: on THIS machine these two rows never mount regardless of the above.
+    # `@deepseek-ai/dsh-experimental-agent-team-profile` sits later in the
+    # profile's bundle list and its patch sets `disabled: true` on
+    # `tool-subagent` and `tool-subagent-fork`, replacing them with the Team
+    # tools. That is the reason `subagent` reports "unknown tool" here — not
+    # anything in this file.
     - id: tool-subagent
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
         toolName: subagent
-        modelSelectionSettings: true
 
     # Fork omits model selection so provider/model stay equal to the parent and
     # the inherited history remains eligible for KV Cache reuse. This preset
