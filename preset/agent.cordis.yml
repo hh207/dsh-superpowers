@@ -227,21 +227,22 @@
     - id: tool-delegate-skill
       name: '@goodjin/dsh-superpowers/delegate-skill'
 
-    # `agentOptions` is the DEFAULT route for every child this tool spawns. A
-    # delegation that names provider/model overrides it (that needs the
-    # `subagent-model-selection` settings allowlist); one that names neither
-    # lands here instead of inheriting the parent's route. Set to the session's
-    # current model to keep today's behaviour explicit rather than inherited.
+    # No `agentOptions` here on purpose. The ported row used to pin
+    # `minimax-cn / MiniMax-M3.1-Flash-Preview`, a route this profile does not
+    # register: every dispatch then failed inside the LLM preflight with
+    # `no adapter registered for provider "minimax-cn"`. Omitting it makes a
+    # fresh child inherit the parent's route, which is what the comments above
+    # always claimed would happen.
+    #
+    # `backgroundMode` is also gone: DSH 0.2.1's schema for this row has no such
+    # field and silently drops it. Continuable is the default, so the behaviour
+    # is unchanged — the line was only misleading.
     - id: tool-subagent
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
         toolName: subagent
         modelSelectionSettings: true
-        backgroundMode: continuable
-        agentOptions:
-          provider: minimax-cn
-          model: MiniMax-M3.1-Flash-Preview
 
     # Fork omits model selection so provider/model stay equal to the parent and
     # the inherited history remains eligible for KV Cache reuse. This preset
@@ -252,7 +253,6 @@
       config:
         provider: fork
         toolName: subagent_fork
-        backgroundMode: continuable
 
     # Production dsh does not install these optional providers. Install the
     # matching Bundle in this Profile and restart the Host, then copy this
@@ -264,7 +264,6 @@
       config:
         provider: codex
         toolName: subagent_codex
-        backgroundMode: one-shot
         maxDepth: provider-managed
 
     - id: tool-subagent-claude-code
@@ -273,7 +272,6 @@
       config:
         provider: claude-code
         toolName: subagent_claude_code
-        backgroundMode: one-shot
         maxDepth: provider-managed
 
     - id: workflow-ptc

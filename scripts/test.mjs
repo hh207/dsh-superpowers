@@ -70,16 +70,32 @@ async function rejectsWith(promise, pattern, message) {
  * so it reads the profile's `superpowers-delegation-settings` row across through
  * the editor (DSH 0.2.x removed `settings.get()`). A stub without `get` failed
  * the two happy-path tests with `ctx.get is not a function` instead of testing
- * the delegation it exists to test — verified 2026-10-16.
+ * the delegation it exists to test — verified 2026-10-15.
+ *
+ * `api` picks which `ctx.subagents` seam the stub publishes, so both Host
+ * generations stay covered: `'activation'` (DSH 0.2.1+, the current one) or
+ * `'continuable'` (DSH 0.2.0). The spy always records what it was handed, so a
+ * test can assert on the SPEC rather than on a request object whose shape
+ * differs between the two.
  */
-function captureCtx({ settings = {}, startContinuable } = {}) {
+function captureCtx({ settings = {}, api = 'activation', onStart } = {}) {
   const registered = []
+  const calls = []
+  const record = async (spec) => {
+    calls.push(spec)
+    return onStart === undefined ? { childId: 'child-stub', result: Promise.resolve({}) } : onStart(spec)
+  }
+  const subagents = api === 'continuable'
+    ? { startContinuable: record }
+    : { startActivation: record }
   return {
     registered,
+    calls,
     ctx: {
       effect(fn) {
         return fn()
       },
+      logger: { info() {}, warn() {} },
       get: (service) =>
         service === 'configEditor'
           ? {
@@ -95,10 +111,7 @@ function captureCtx({ settings = {}, startContinuable } = {}) {
       settings: {
         get: () => settings,
       },
-      subagents: {
-        startContinuable:
-          startContinuable ?? (async () => ({ childId: 'child-stub' })),
-      },
+      subagents,
     },
   }
 }
@@ -234,7 +247,6 @@ if (depsPresent) {
   })
 
   await test('派发走设置里的固定路由，返回值和台账都对', async () => {
-    const calls = []
     const settings = {
       defaultProvider: 'p0',
       defaultModel: 'm0',
@@ -242,12 +254,9 @@ if (depsPresent) {
         'test-driven-development': { provider: 'p1', model: 'm1' },
       },
     }
-    const { registered, ctx } = captureCtx({
+    const { registered, calls, ctx } = captureCtx({
       settings,
-      startContinuable: async (request) => {
-        calls.push(request)
-        return { childId: 'child-1' }
-      },
+      onStart: async (spec) => ({ childId: 'child-1', result: Promise.resolve({}) }),
     })
     mod.apply(ctx, {})
     const result = await registered[0].execute(
@@ -266,9 +275,50 @@ if (depsPresent) {
     assert(allRoutes()['child-1']?.model === 'm1', '台账应记下子代理的实际路由')
   })
 
+  await test('0.2.1 的 startActivation：signal 在 spec 上、request 里不带 signal/persona', async () => {
+    const { registered, calls, ctx } = captureCtx({ api: 'activation' })
+    mod.apply(ctx, {})
+    await registered[0].execute(
+      { task: '标签', brief: '简报' },
+      { agent: { id: 'parent' }, signal: new AbortController().signal },
+    )
+    const spec = calls[0]
+    assert(spec.delivery === 'parent', `delivery 应为 parent，实际 ${spec.delivery}`)
+    assert(spec.signal instanceof AbortSignal, 'signal 应在 spec 顶层')
+    assert(spec.request.signal === undefined, 'request 里不应再带 signal（0.2.1 的类型已移除）')
+    assert(spec.request.persona === undefined, 'request 里不应再带 persona（0.2.1 的类型已移除）')
+    assert(Array.isArray(spec.request.prompt) && spec.request.prompt[0]?.text === '简报', 'brief 应作为 prompt 传入')
+  })
+
+  await test('0.2.0 的 startContinuable：signal 与 persona 都在 request 里', async () => {
+    const { registered, calls, ctx } = captureCtx({ api: 'continuable' })
+    mod.apply(ctx, {})
+    await registered[0].execute(
+      { task: '标签', brief: '简报' },
+      { agent: { id: 'parent' }, signal: new AbortController().signal },
+    )
+    const spec = calls[0]
+    assert(spec.signal instanceof AbortSignal, 'signal 应在 spec 顶层')
+    assert(spec.request.signal instanceof AbortSignal, 'request 里也应带 signal（0.2.0 要求）')
+    assert(typeof spec.request.persona === 'string' && spec.request.persona.length > 0, '0.2.0 路径应转发 persona')
+    assert(spec.delivery === undefined, '0.2.0 的 spec 没有 delivery 字段')
+  })
+
+  await test('Host 换名后不再静默：登记期就降级并报出原因', async () => {
+    const { registered, ctx } = captureCtx()
+    ctx.subagents = { getProvider() {}, list() { return [] } }
+    mod.apply(ctx, {})
+    assert(registered.length === 1, `应登记 1 个降级工具，实际 ${registered.length}`)
+    assert(/degraded/i.test(registered[0].description), '降级说明要写明它坏了')
+    await rejectsWith(
+      registered[0].execute({ task: 'x', brief: 'y' }, {}),
+      /neither startActivation|degraded/i,
+      '降级工具调用时应报出接口不匹配',
+    )
+  })
+
   await test('有默认路由时，复用主会话哨兵仍不传 agentOptions', async () => {
     const { ROUTE_USE_PARENT_SESSION } = await import(pathToFileURL(join(dirname(target), 'delegable-skills.js')).href)
-    const calls = []
     const settings = {
       defaultProvider: 'p0',
       defaultModel: 'm0',
@@ -276,13 +326,7 @@ if (depsPresent) {
         brainstorming: { provider: ROUTE_USE_PARENT_SESSION, model: ROUTE_USE_PARENT_SESSION },
       },
     }
-    const { registered, ctx } = captureCtx({
-      settings,
-      startContinuable: async (request) => {
-        calls.push(request)
-        return { childId: 'child-parent' }
-      },
-    })
+    const { registered, calls, ctx } = captureCtx({ settings })
     mod.apply(ctx, {})
     const result = await registered[0].execute(
       { skill: 'brainstorming', task: '标签', brief: '简报' },

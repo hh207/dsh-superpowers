@@ -76,7 +76,36 @@ token 在你打开 DSH 的那个地址里，**每次重启都会换**。这个�
 **改浏览器侧时，先起一个临时端口验，别直接动正在用的那个。**
 把 token 抄下来会把它暴露在别处，起新实例反而更安全。
 
-## DSH 接口现状（2026-09 核对；能力类接口 2026-10-16 复核）
+## DSH 接口现状（2026-09 核对；能力类接口 2026-10-16 复核；子代理接缝 2026-10-30 复核）
+
+### 子代理接缝在 0.2.1 改了名（2026-10-30 实测，桌面版 0.2.1-rc.5）
+
+**`ctx.subagents.startContinuable(spec)` 在 0.2.1 被换成了 `startActivation(spec)`。**
+0.2.0-rc.2 还有前者，0.2.1-rc.1 起只剩后者——`startContinuable` 在主机 bundle 里
+**一次都不出现**，`startActivation` 出现 25 次。这不是弃用过渡，是直接替换。
+
+三处连带变化：
+
+| 项 | 0.2.0 | 0.2.1 |
+| --- | --- | --- |
+| 方法 | `startContinuable(spec)` | `startActivation(spec)` |
+| `signal` 位置 | `spec.signal` **和** `spec.request.signal` 都有 | 只在 `spec.signal`；`request` 的类型是 `Omit<SubagentStartRequest,'label'\|'signal'>` |
+| 每子代理 persona | `request.persona` 可用 | **字段已删**，`SubagentCapabilities` 里的 `persona`/`toolFilter` 能力位也一起删了 |
+| 返回值 | `{childId, messageId}` | `SubagentActivation{childId, messageId?, result, dispose}` |
+| 新增必填 | — | `spec.delivery: 'parent' \| 'caller'` |
+
+**这个改名的失败模式是静默的：** 0.2.1 照样发布 `ctx.subagents` 服务对象，只是上面
+没有那个方法。所以「服务在不在」的检查会通过，报错推迟到第一次真正派发时才炸成
+`ctx.subagents.startContinuable is not a function`。**探针必须探方法，不能探服务**——
+和下面 `cosmokit.isVolatile` 那条是同一个教训，只是换了一层。
+
+现在 `lib/skill-delegation.js` 的 `delegationApi(ctx)` 两条都探，优先
+`startActivation`；一条都没有就抛，由 `apply` 的 catch 接住变成降级工具，
+让它在登记期就说清楚，而不是等派发。
+
+**`peerDependencies` 补了 `@deepseek-ai/dsh-subagent`。** 之前没声明，DSH 的
+`evaluatePluginCompatibility` 只看 `@deepseek-ai/dsh*` 前缀的 peer，于是这道闸门
+既拦不住不兼容、也不会提示——装得上、跑不起来。
 
 ### 对等依赖的能力地板（2026-10-16 拉发布包实测，别靠版本号猜）
 
@@ -84,10 +113,22 @@ token 在你打开 DSH 的那个地址里，**每次重启都会换**。这个�
 | --- | --- | --- |
 | `@deepseek-ai/cosmokit` | `isVolatile` / `createVolatile`（配置引用） | **1.8.4**（1.8.2、1.8.3 都没有） |
 | `@deepseek-ai/schemastery` | schema 上的 `.volatile()` | **3.18.3**（3.18.2 没有） |
+| `@deepseek-ai/dsh-subagent` | `startActivation`（0.2.1 起的接缝） | **0.2.0-rc.1**（0.1.x 只有 `startContinuable`） |
 
 schemastery 版本更老时，插件构造 `Config` 会抛，被 `index.js` 的 try/catch 吞成
 `undefined`——**DSH 于是跳过校验，配置被当明文存下，故障推迟到读的时候才炸**。
-所以这两个地板是硬要求，不是建议。
+所以头两个地板是硬要求，不是建议。
+
+### 预设里两个不存在的配置键（2026-10-30 核对，已删）
+
+- **`backgroundMode`**：`tool-subagent` 的 `Config` 里没有这个字段，主机 bundle 中
+  该字符串出现 **0 次**，写上去被静默丢弃。0.2.1 的可继续子代理是默认行为，
+  所以删掉它不改变任何行为——那一行从来只是看起来有用。
+- **`agentOptions.provider: minimax-cn`**：schema 认这个字段，但这个 profile 的
+  LLM 行里没有注册该 provider，每次派发都在 `llm.resolveCallConfig` 预检处失败：
+  `no adapter registered for provider "minimax-cn"`。预设里钉死别人的模型路由，
+  在换机器/换 profile 时必然失效——**默认路由要么省略（继承父会话），要么指向
+  本 profile 真实存在的 provider**。
 
 ### 组合与 patch 文件
 
@@ -186,7 +227,10 @@ schemastery 版本更老时，插件构造 `Config` 会抛，被 `index.js` 的 
 4. **降级要探「能力在不在」，不是探「模块在不在」。** 一个装了但版本太老的对等依赖
    照样能 import 成功、模块对象照样 truthy，只是不含你要的那个函数——只判断模块在不在，
    降级分支永远不执行，报错直接落在第一次调用上（2026-10-16：`cosmokit.isVolatile is not a
-   function`，设置页整个栏目打不开）。所以：
+   function`，设置页整个栏目打不开；2026-10-30 同一条教训换了一层：`ctx.subagents` 服务在，
+   上面的方法没了，见上面的子代理接缝）。所以：
    - 可选依赖的判断写成 `typeof mod?.fn === 'function'`，不是 `mod ? … : …`；
+   - **服务对象上的方法同样要探**（`typeof ctx.subagents.startActivation === 'function'`），
+     服务存在不等于方法存在；
    - **用到的能力有版本地板时，把地板写进 `peerDependencies`**，让装不上旧版的用户在
-     安装阶段就看见，而不是在功能里撞上（地板怎么定的见下面的接口现状）。
+     安装阶段就看见，而不是在功能里撞上（地板怎么定的见上面的接口现状）。

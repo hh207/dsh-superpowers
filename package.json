@@ -45,6 +45,7 @@
   "peerDependencies": {
     "@deepseek-ai/cosmokit": ">=1.8.4 <2.0.0",
     "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-subagent": ">=0.2.0-rc.1 <0.3.0",
     "@deepseek-ai/dsh-tools": ">=0.1.5-rc.2 <0.3.0",
     "@deepseek-ai/schemastery": ">=3.18.3 <4.0.0"
   },
